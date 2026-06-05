@@ -92,8 +92,12 @@ def _ha_version_key(version: str) -> tuple[int, ...]:
 
 def pycares_constraint_for_ha_month(ha_month: str) -> str | None:
     """Extra pycares pin for tox/uv when HA's resolver picks an incompatible wheel."""
-    year = int(ha_month.split(".", 1)[0])
-    if year == 2025:
+    parts = ha_month.split(".", 1)
+    year = int(parts[0])
+    month = int(parts[1]) if len(parts) > 1 else 0
+    # HA 2025.x and 2026.1 ship aiodns 3.x which requires pycares<5.
+    # HA 2026.2+ ships aiodns 4.x which requires pycares>=5.
+    if year == 2025 or (year == 2026 and month == 1):
         return PYCARES_CONSTRAINT_LEGACY
     if year >= 2026:
         return PYCARES_CONSTRAINT_MODERN

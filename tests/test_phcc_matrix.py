@@ -19,7 +19,9 @@ from phcc_matrix import (  # noqa: E402
 
 
 def test_pycares_constraint_for_ha_month():
+    """pycares_constraint_for_ha_month returns the correct constraint per HA month."""
     assert pycares_constraint_for_ha_month("2025.10") == PYCARES_CONSTRAINT_LEGACY
+    assert pycares_constraint_for_ha_month("2026.1") == PYCARES_CONSTRAINT_LEGACY
     assert pycares_constraint_for_ha_month("2026.3") == PYCARES_CONSTRAINT_MODERN
     assert pycares_constraint_for_ha_month("2024.12") is None
 
@@ -47,6 +49,7 @@ def test_write_uv_pycares_override_replaces_existing(tmp_path, monkeypatch):
 
 
 def test_write_uv_pycares_override_inserts_after_uv_section(tmp_path, monkeypatch):
+    """write_uv_pycares_override inserts override-dependencies before [tool.uv.sources]."""
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text("[tool.uv]\n\n[tool.uv.sources]\n", encoding="utf-8")
     monkeypatch.setattr("phcc_matrix.PYPROJECT_PATH", pyproject)
