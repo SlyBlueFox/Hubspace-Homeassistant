@@ -57,12 +57,23 @@ class HubspaceLight(HubspaceBaseEntity, LightEntity):
     @property
     def brightness(self) -> int | None:
         """The brightness of this light between 1..255."""
-        if not self.resource.dimming:
-            return None
-        pct = self.resource.brightness
+        pct = displayed_brightness_pct(self.resource)
         if pct is None:
-            pct = 100
+            return None
         return value_to_brightness((1, 100), pct)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, int | str]:
+        """Expose dual-channel brightness and API mode for automations."""
+        attrs: dict[str, int | str] = {}
+        if self.resource.is_dual_channel:
+            if (color_pct := self.resource.channel_brightness("color")) is not None:
+                attrs["color_brightness_pct"] = int(color_pct)
+            if (white_pct := self.resource.channel_brightness("white")) is not None:
+                attrs["white_brightness_pct"] = int(white_pct)
+            if self.resource.color_mode is not None:
+                attrs["api_color_mode"] = self.resource.color_mode.mode
+        return attrs
 
     @property
     def color_mode(self) -> ColorMode:
@@ -125,6 +136,10 @@ class HubspaceLight(HubspaceBaseEntity, LightEntity):
             return None
         if self.color_mode == ColorMode.WHITE:
             return None
+        if self.color_mode == ColorMode.COLOR_TEMP and api_color_mode_is_mixed(
+            self.resource
+        ):
+            return None
         return (
             self.resource.color.red,
             self.resource.color.green,
@@ -186,6 +201,26 @@ class HubspaceLight(HubspaceBaseEntity, LightEntity):
         )
 
 
+def api_color_mode_is_mixed(resource: Light) -> bool:
+    """Return True when the fixture has both color and white channels active."""
+    return resource.color_mode is not None and resource.color_mode.mode == "mixed"
+
+
+def displayed_brightness_pct(resource: Light) -> int | None:
+    """Return the brightness percentage shown on the HA light slider."""
+    if not resource.dimming:
+        return None
+    if not resource.is_dual_channel:
+        pct = resource.brightness
+        return int(pct) if pct is not None else 100
+    api_mode = resource.color_mode.mode if resource.color_mode else None
+    if api_mode in ("color", "sequence"):
+        return int(resource.channel_brightness("color") or resource.brightness)
+    if api_mode == "white":
+        return int(resource.channel_brightness("white") or resource.brightness)
+    return int(resource.brightness)
+
+
 def is_api_white_zone(resource: Light) -> bool:
     """Return True for zones that use API color-mode white without CCT."""
     return resource.supports_color_white and not resource.supports_color_temperature
@@ -206,8 +241,9 @@ def wants_api_white(resource: Light, kwargs: dict, white: bool | int | None) -> 
 
 def default_brightness_pct(resource: Light) -> int:
     """Return a 1..100 brightness for white-mode commands."""
-    if resource.dimming and resource.brightness is not None:
-        return int(resource.brightness)
+    pct = displayed_brightness_pct(resource)
+    if pct is not None:
+        return pct
     return 100
 
 
@@ -221,6 +257,14 @@ def get_color_mode(resource: Light, supported_modes: set[ColorMode]) -> ColorMod
         return list(supported_modes)[0] if len(supported_modes) else ColorMode.ONOFF
     if resource.color_mode.mode == "color":
         return ColorMode.RGB
+    if resource.color_mode.mode == "mixed":
+        if ColorMode.COLOR_TEMP in supported_modes:
+            return ColorMode.COLOR_TEMP
+        if ColorMode.RGB in supported_modes:
+            return ColorMode.RGB
+        if ColorMode.BRIGHTNESS in supported_modes:
+            return ColorMode.BRIGHTNESS
+        return ColorMode.ONOFF
     if resource.color_mode.mode == "white":
         if ColorMode.COLOR_TEMP in supported_modes:
             return ColorMode.COLOR_TEMP

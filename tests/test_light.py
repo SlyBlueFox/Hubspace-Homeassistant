@@ -10,6 +10,7 @@ from homeassistant.components.light import (
     ColorMode,
 )
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util.color import value_to_brightness
 import pytest
 
 from custom_components.hubspace import light
@@ -21,11 +22,11 @@ fan_zandra_light = fan_zandra[1]
 
 switch_dimmer = create_devices_from_data("dimmer-HPDA1110NWBP.json")
 switch_dimmer_light = switch_dimmer[0]
-switch_dimmer_light_id = "light.laundry_room_light"
+switch_dimmer_light_id = "light.laundry_room"
 
 rgb_temp_light = create_devices_from_data("light-rgb_temp.json")[0]
 light_a21 = create_devices_from_data("light-a21.json")[0]
-light_a21_id = "light.friendly_device_53_light"
+light_a21_id = "light.friendly_device_53"
 rgbw_led_strip = create_devices_from_data("rgbw-led-strip.json")[0]
 
 trim_light_parent = create_devices_from_data("light-with-trim.json")[0]
@@ -33,6 +34,10 @@ trim_light_trim_id = f"{trim_light_parent.id}-light-trim"
 trim_light_main_id = f"{trim_light_parent.id}-light-main"
 trim_light_entity_id = "light.dining_room_light_1_trim"
 trim_light_main_entity_id = "light.dining_room_light_1_main"
+
+flushmount_from_file = create_devices_from_data("light-flushmount.json")
+flushmount_dev = flushmount_from_file[0]
+flushmount_light_id = "light.ceiling_light"
 
 
 @pytest.fixture
@@ -283,8 +288,7 @@ async def test_turn_off_dimmer(mocked_dimmer):
             "light-flushmount.json",
             1,
             [
-                "light.ceiling_light_color",
-                "light.ceiling_light_white",
+                "light.ceiling_light",
             ],
         ),
         (
@@ -320,6 +324,21 @@ async def test_add_new_device(
         assert entity_reg.async_get(entity) is not None, (
             f"Unable to find entity {entity}"
         )
+
+
+@pytest.fixture
+async def mocked_flushmount_light(mocked_entry):
+    """Initialize a dual-channel flushmount light."""
+    hass, entry, bridge = mocked_entry
+    await bridge.generate_devices_from_data(
+        create_devices_from_data("light-flushmount.json")
+    )
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    for hub_light in bridge.lights.items:
+        hub_light.available = True
+    yield hass, entry, bridge
+    await bridge.close()
 
 
 @pytest.fixture
@@ -564,3 +583,73 @@ async def test_default_brightness_pct_fallback(mocked_trim_light):
     trim = bridge.lights[trim_light_trim_id]
     trim.dimming.brightness = None
     assert light.default_brightness_pct(trim) == 100
+
+
+@pytest.mark.asyncio
+async def test_flushmount_shows_color_brightness_in_color_mode(mocked_flushmount_light):
+    """HA light slider tracks the color channel while API mode is color."""
+    hass, _, bridge = mocked_flushmount_light
+    dev = bridge.lights[flushmount_dev.id]
+    dev.color_mode.mode = "color"
+    dev.color_brightness = 25
+    dev.dimming.brightness = 50
+    light_ent = _get_hubspace_light(hass, flushmount_light_id)
+    light_ent.on_update()
+    assert light_ent.brightness == value_to_brightness((1, 100), 25)
+
+
+@pytest.mark.asyncio
+async def test_flushmount_shows_white_brightness_in_white_mode(mocked_flushmount_light):
+    """HA light slider tracks the white channel while API mode is white."""
+    hass, _, bridge = mocked_flushmount_light
+    dev = bridge.lights[flushmount_dev.id]
+    dev.color_mode.mode = "white"
+    dev.white_brightness = 40
+    dev.dimming.brightness = 50
+    light_ent = _get_hubspace_light(hass, flushmount_light_id)
+    light_ent.on_update()
+    assert light_ent.brightness == value_to_brightness((1, 100), 40)
+
+
+@pytest.mark.asyncio
+async def test_flushmount_mixed_mode_uses_primary_brightness(mocked_flushmount_light):
+    """Both channels active: main slider reflects overall primary brightness."""
+    hass, _, bridge = mocked_flushmount_light
+    dev = bridge.lights[flushmount_dev.id]
+    dev.color_mode.mode = "mixed"
+    dev.dimming.brightness = 60
+    dev.color_brightness = 10
+    dev.white_brightness = 90
+    light_ent = _get_hubspace_light(hass, flushmount_light_id)
+    light_ent.on_update()
+    assert light_ent.brightness == value_to_brightness((1, 100), 60)
+    assert light_ent.color_mode == ColorMode.COLOR_TEMP
+
+
+@pytest.mark.asyncio
+async def test_flushmount_exposes_dual_channel_attributes(mocked_flushmount_light):
+    """Per-channel brightness and API mode are exposed as attributes."""
+    hass, _, bridge = mocked_flushmount_light
+    dev = bridge.lights[flushmount_dev.id]
+    dev.color_mode.mode = "mixed"
+    light_ent = _get_hubspace_light(hass, flushmount_light_id)
+    light_ent.on_update()
+    attrs = light_ent.extra_state_attributes
+    assert attrs["color_brightness_pct"] == dev.color_brightness
+    assert attrs["white_brightness_pct"] == dev.white_brightness
+    assert attrs["api_color_mode"] == "mixed"
+
+
+@pytest.mark.asyncio
+async def test_flushmount_turn_on_rgb_sends_color_mode(mocked_flushmount_light, mocker):
+    """RGB turn-on must request API color mode so brightness routes to color."""
+    hass, _, bridge = mocked_flushmount_light
+    sent = mocker.spy(bridge.lights, "set_state")
+    light_ent = _get_hubspace_light(hass, flushmount_light_id)
+    await light_ent.async_turn_on(rgb_color=(10, 20, 30), brightness=128)
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    call_kwargs = sent.call_args.kwargs
+    assert call_kwargs["color_mode"] == "color"
+    assert call_kwargs["color"] == (10, 20, 30)
+    assert call_kwargs["brightness"] == 50

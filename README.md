@@ -67,6 +67,13 @@ are as follows:
 
 ## Changelog
 
+- 6.0.2
+
+  - Require `aioafero==7.0.5`: dual-channel RGB+WW lights (flushmounts, RGBCW strips, and similar) stay as **one** light instead of incorrect `_color` / `_white` split entities ([#230](https://github.com/jdeath/Hubspace-Homeassistant/issues/230))
+  - Mode-aware brightness on dual-channel lights: the HA slider follows the active API color mode (color, white, or overall in mixed mode) ([#160](https://github.com/jdeath/Hubspace-Homeassistant/issues/160))
+  - Expose `color_brightness_pct`, `white_brightness_pct`, and `api_color_mode` attributes on dual-channel lights for automations
+  - Some unsplit light entity IDs may change (for example `light.foo_light` → `light.foo`); update automations if needed
+
 - 6.0.1
 
   - Fix split lights not being controllable
@@ -318,6 +325,15 @@ that can access Home Assistants Filestore.
 
   - After updating the Unit system, you must also reload the integration for the values to show correctly. This
     can be accomplished by going to Settings -> Devices & services -> Hubspace -> Triple dots -> Reload.
+
+- I upgraded Hubspace and my RGB / flushmount light shows extra entities or wrong brightness
+
+  - Version 6.0.2 fixes dual-channel lights that were incorrectly split into separate color and white entities.
+    Reload the integration after upgrading so Home Assistant drops the old entities.
+  - Dual-channel lights now expose one brightness slider that follows the active color mode; per-channel levels
+    are available as `color_brightness_pct` and `white_brightness_pct` attributes.
+  - If automations reference old entity IDs (including lights that no longer have a `_light` suffix), update
+    them in Settings → Devices & services → Entities.
 
 _Thanks to everyone who starred my repo! To star it click on the image below, then it will be on top right. Thanks!_
 
