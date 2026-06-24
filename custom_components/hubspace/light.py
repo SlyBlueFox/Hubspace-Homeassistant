@@ -166,6 +166,24 @@ class HubspaceLight(HubspaceBaseEntity, LightEntity):
         elif white is True or (ATTR_WHITE in kwargs and white is None):
             if brightness is None:
                 brightness = default_brightness_pct(self.resource)
+        if (
+            color_mode is None
+            and self.resource.color_mode
+            and self.resource.color_mode.mode == "night-light"
+        ):
+            # The main light cannot display night-light. If the fixture is still
+            # stored in night-light (the night light was left on), restore the
+            # pre-night-light mode and select it before powering on so toggling
+            # the main light never resumes or flashes night-light.
+            color_mode = self.bridge.night_light_previous_modes.get(
+                self.resource.id, "white"
+            )
+            if not self.resource.is_on:
+                await self.bridge.async_request_call(
+                    self.controller.set_state,
+                    device_id=self.resource.id,
+                    color_mode=color_mode,
+                )
         await self.bridge.async_request_call(
             self.controller.set_state,
             device_id=self.resource.id,
@@ -179,20 +197,10 @@ class HubspaceLight(HubspaceBaseEntity, LightEntity):
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn device off."""
-        color_mode: str | None = None
-        if self.resource.color_mode and self.resource.color_mode.mode == "night-light":
-            # Reset to the pre-night-light mode (color/white/effect) in the same
-            # call so the next power-on does not resume night light. Sending the
-            # mode without `on` makes the device echo `power: on` until the next
-            # poll, so power-off and the reset go together.
-            color_mode = self.bridge.night_light_previous_modes.get(
-                self.resource.id, "white"
-            )
         await self.bridge.async_request_call(
             self.controller.set_state,
             device_id=self.resource.id,
             on=False,
-            color_mode=color_mode,
         )
 
 
@@ -247,9 +255,12 @@ class HubspaceNightLight(HubspaceBaseEntity, LightEntity):
     async def async_turn_off(self, **kwargs) -> None:
         """Turn device off."""
         self.logger.debug("Adjusting entity %s with %s", self.resource.id, kwargs)
-        previous = self.bridge.night_light_previous_modes.get(self.resource.id, "white")
         if self._previous_on:
-            # Restore the mode the light was in before night light was enabled.
+            # The light was on before; restore the mode it had then. The light is
+            # already on, so switching modes does not flash.
+            previous = self.bridge.night_light_previous_modes.get(
+                self.resource.id, "white"
+            )
             await self.bridge.async_request_call(
                 self.controller.set_state,
                 device_id=self.resource.id,
@@ -257,15 +268,13 @@ class HubspaceNightLight(HubspaceBaseEntity, LightEntity):
                 color_mode=previous,
             )
         else:
-            # The light was off beforehand. Turn it off and restore the prior
-            # color-mode in one call so a later power-on does not use night light.
-            # Sending the mode without `on` makes the device echo `power: on`
-            # until the next poll, so both go together.
+            # The light was off before; just turn it off. Never send a color-mode
+            # while turning off -- the fixture would flash that mode. The stored
+            # night-light mode is reset on the next main-light turn-on instead.
             await self.bridge.async_request_call(
                 self.controller.set_state,
                 device_id=self.resource.id,
                 on=False,
-                color_mode=previous,
             )
 
 
