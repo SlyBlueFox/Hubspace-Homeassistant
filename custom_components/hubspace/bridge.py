@@ -51,6 +51,9 @@ class HubspaceBridge:
         self.config_entry = config_entry
         self.hass = hass
         self.authorized = False
+        # Maps light id -> the color-mode that was active before night-light was
+        # enabled, so the main light and night-light entities can restore it.
+        self.night_light_previous_modes: dict[str, str] = {}
         # Jobs to be executed when API is reset.
         self.reset_jobs: list[core.CALLBACK_TYPE] = []
         # self.sensor_manager: SensorManager | None = None

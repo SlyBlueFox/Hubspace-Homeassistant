@@ -184,6 +184,97 @@ class HubspaceLight(HubspaceBaseEntity, LightEntity):
             device_id=self.resource.id,
             on=False,
         )
+        if self.resource.color_mode and self.resource.color_mode.mode == "night-light":
+            # Reset to the pre-night-light mode (color/white/effect) while off so
+            # the next power-on does not resume night light.
+            previous = self.bridge.night_light_previous_modes.get(
+                self.resource.id, "white"
+            )
+            await self.bridge.async_request_call(
+                self.controller.set_state,
+                device_id=self.resource.id,
+                color_mode=previous,
+            )
+
+
+class HubspaceNightLight(HubspaceBaseEntity, LightEntity):
+    """Representation of an Afero light's night-light color-mode as a light."""
+
+    _attr_supported_color_modes = {ColorMode.ONOFF}
+    _attr_color_mode = ColorMode.ONOFF
+
+    def __init__(
+        self,
+        bridge: HubspaceBridge,
+        controller: LightController,
+        resource: Light,
+    ) -> None:
+        """Initialize an Afero night light."""
+        super().__init__(bridge, controller, resource, instance="night-light")
+        self._attr_name = "Night Light"
+        self._previous_on: bool | None = None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Determine if night light mode is active."""
+        if self.resource.color_mode is None:
+            return None
+        return self.resource.is_on and self.resource.color_mode.mode == "night-light"
+
+    async def async_turn_on(self, **kwargs) -> None:
+        """Turn device on."""
+        self.logger.debug("Adjusting entity %s with %s", self.resource.id, kwargs)
+        # Remember the prior state so it can be restored when turned off.
+        self._previous_on = self.resource.is_on
+        if self.resource.color_mode and self.resource.color_mode.mode != "night-light":
+            self.bridge.night_light_previous_modes[self.resource.id] = (
+                self.resource.color_mode.mode
+            )
+        # Select the mode before powering on so the light does not briefly
+        # illuminate in its previous mode.
+        if not self.resource.is_on:
+            await self.bridge.async_request_call(
+                self.controller.set_state,
+                device_id=self.resource.id,
+                color_mode="night-light",
+            )
+        await self.bridge.async_request_call(
+            self.controller.set_state,
+            device_id=self.resource.id,
+            on=True,
+            color_mode="night-light",
+        )
+
+    async def async_turn_off(self, **kwargs) -> None:
+        """Turn device off."""
+        self.logger.debug("Adjusting entity %s with %s", self.resource.id, kwargs)
+        previous = self.bridge.night_light_previous_modes.get(self.resource.id, "white")
+        if self._previous_on:
+            # Restore the mode the light was in before night light was enabled.
+            await self.bridge.async_request_call(
+                self.controller.set_state,
+                device_id=self.resource.id,
+                on=True,
+                color_mode=previous,
+            )
+        else:
+            # The light was off beforehand. Turn it off, then restore the prior
+            # color-mode while off so a later power-on does not use night light.
+            await self.bridge.async_request_call(
+                self.controller.set_state,
+                device_id=self.resource.id,
+                on=False,
+            )
+            await self.bridge.async_request_call(
+                self.controller.set_state,
+                device_id=self.resource.id,
+                color_mode=previous,
+            )
+
+
+def supports_night_light(resource: Light) -> bool:
+    """Determine if a light exposes the night-light color-mode."""
+    return "night-light" in (resource.color_modes or [])
 
 
 def is_api_white_zone(resource: Light) -> bool:
@@ -242,15 +333,33 @@ async def async_setup_entry(
     api: AferoBridgeV1 = bridge.api
     controller: LightController = api.lights
     make_entity = partial(HubspaceLight, bridge, controller)
+    make_night_light = partial(HubspaceNightLight, bridge, controller)
 
     @callback
     def async_add_entity(event_type: EventType, resource: Light) -> None:
         """Add an entity."""
         async_add_entities([make_entity(resource)])
 
+    @callback
+    def async_add_night_light(event_type: EventType, resource: Light) -> None:
+        """Add a night light for a newly discovered light."""
+        if supports_night_light(resource):
+            async_add_entities([make_night_light(resource)])
+
     # add all current items in controller
     async_add_entities(make_entity(entity) for entity in controller)
-    # register listener for new entities
+    # add night lights for any light that supports the mode
+    async_add_entities(
+        make_night_light(entity)
+        for entity in controller
+        if supports_night_light(entity)
+    )
+    # register listeners for new entities
     config_entry.async_on_unload(
         controller.subscribe(async_add_entity, event_filter=EventType.RESOURCE_ADDED)
+    )
+    config_entry.async_on_unload(
+        controller.subscribe(
+            async_add_night_light, event_filter=EventType.RESOURCE_ADDED
+        )
     )

@@ -34,6 +34,10 @@ trim_light_main_id = f"{trim_light_parent.id}-light-main"
 trim_light_entity_id = "light.dining_room_light_1_trim"
 trim_light_main_entity_id = "light.dining_room_light_1_main"
 
+# Hampton Bay Penrose vanity light (model C06021201A) named "Vanity Bar Light".
+penrose_main_light_id = "light.vanity_bar_light_light"
+penrose_night_light_id = "light.vanity_bar_light_night_light"
+
 
 @pytest.fixture
 async def mocked_entity(mocked_entry):
@@ -53,6 +57,20 @@ async def mocked_dimmer(mocked_entry):
     await bridge.generate_devices_from_data([switch_dimmer_light])
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
+    yield hass, entry, bridge
+    await bridge.close()
+
+
+@pytest.fixture
+async def mocked_penrose(mocked_entry):
+    """Initialize a mocked Penrose vanity light and register it within Home Assistant."""
+    hass, entry, bridge = mocked_entry
+    await bridge.generate_devices_from_data(
+        create_devices_from_data("light-penrose.json")
+    )
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert len(bridge.devices.items) == 1
     yield hass, entry, bridge
     await bridge.close()
 
@@ -564,3 +582,188 @@ async def test_default_brightness_pct_fallback(mocked_trim_light):
     trim = bridge.lights[trim_light_trim_id]
     trim.dimming.brightness = None
     assert light.default_brightness_pct(trim) == 100
+
+
+@pytest.mark.asyncio
+async def test_night_light_created(mocked_penrose):
+    """Ensure a light with the night-light color-mode creates a night light."""
+    hass, _, bridge = mocked_penrose
+    entity_reg = er.async_get(hass)
+    assert entity_reg.async_get(penrose_night_light_id) is not None
+    light_id = next(iter(bridge.lights)).id
+    assert "night-light" in bridge.lights[light_id].color_modes
+
+
+@pytest.mark.asyncio
+async def test_night_light_turn_on(mocked_penrose):
+    """Ensure turning the night light on selects the night-light color-mode."""
+    hass, _, bridge = mocked_penrose
+    light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = True
+    bridge.lights[light_id].color_mode.mode = "white"
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    assert bridge.lights[light_id].color_mode.mode == "night-light"
+    assert hass.states.get(penrose_night_light_id).state == "on"
+
+
+@pytest.mark.asyncio
+async def test_night_light_turn_on_from_off(mocked_penrose):
+    """Ensure enabling night light from off ends with the light on in the mode."""
+    hass, _, bridge = mocked_penrose
+    light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = False
+    bridge.lights[light_id].color_mode.mode = "white"
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    assert bridge.lights[light_id].is_on
+    assert bridge.lights[light_id].color_mode.mode == "night-light"
+    assert hass.states.get(penrose_night_light_id).state == "on"
+
+
+@pytest.mark.asyncio
+async def test_night_light_restores_previous_mode(mocked_penrose):
+    """Ensure turning the night light off restores the mode active before it."""
+    hass, _, bridge = mocked_penrose
+    light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = True
+    bridge.lights[light_id].color_mode.mode = "color"
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    await hass.services.async_call(
+        "light",
+        "turn_off",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    assert bridge.lights[light_id].is_on
+    assert bridge.lights[light_id].color_mode.mode == "color"
+    assert hass.states.get(penrose_night_light_id).state == "off"
+
+
+@pytest.mark.asyncio
+async def test_night_light_off_stays_off(mocked_penrose):
+    """Ensure disabling night light returns a light that began off to off, white."""
+    hass, _, bridge = mocked_penrose
+    light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = False
+    bridge.lights[light_id].color_mode.mode = "white"
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    await hass.services.async_call(
+        "light",
+        "turn_off",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    assert not bridge.lights[light_id].is_on
+    # The stored mode is restored so a later power-on does not use night light.
+    assert bridge.lights[light_id].color_mode.mode == "white"
+    assert hass.states.get(penrose_night_light_id).state == "off"
+
+
+@pytest.mark.asyncio
+async def test_night_light_turn_off_defaults_to_off(mocked_penrose):
+    """Ensure turning the night light off turns the light off with no prior state."""
+    hass, _, bridge = mocked_penrose
+    light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = True
+    bridge.lights[light_id].color_mode.mode = "night-light"
+    await hass.services.async_call(
+        "light",
+        "turn_off",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    assert not bridge.lights[light_id].is_on
+    assert bridge.lights[light_id].color_mode.mode == "white"
+    assert hass.states.get(penrose_night_light_id).state == "off"
+
+
+@pytest.mark.asyncio
+async def test_main_toggle_resets_to_prior_mode(mocked_penrose):
+    """Ensure the main light toggle resets the prior mode when leaving night light."""
+    hass, _, bridge = mocked_penrose
+    light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = True
+    bridge.lights[light_id].color_mode.mode = "color"
+    # Enable night light, then turn the main light off via its own toggle.
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    await hass.services.async_call(
+        "light",
+        "turn_off",
+        {"entity_id": penrose_main_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    # The stored mode is the one active before night light, not "white".
+    assert not bridge.lights[light_id].is_on
+    assert bridge.lights[light_id].color_mode.mode == "color"
+
+
+@pytest.mark.asyncio
+async def test_main_toggle_reset_defaults_to_white(mocked_penrose):
+    """Ensure the main toggle reset falls back to white when no prior mode is known."""
+    hass, _, bridge = mocked_penrose
+    light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = True
+    bridge.lights[light_id].color_mode.mode = "night-light"
+    await hass.services.async_call(
+        "light",
+        "turn_off",
+        {"entity_id": penrose_main_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    assert not bridge.lights[light_id].is_on
+    assert bridge.lights[light_id].color_mode.mode == "white"
+
+
+@pytest.mark.asyncio
+async def test_night_light_not_created(mocked_entity):
+    """Ensure a device without the night-light color-mode has no night light."""
+    hass, _, _ = mocked_entity
+    entity_reg = er.async_get(hass)
+    assert not any(
+        entity.entity_id.endswith("_night_light")
+        for entity in entity_reg.entities.values()
+    )
