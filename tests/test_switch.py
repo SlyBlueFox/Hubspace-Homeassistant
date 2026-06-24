@@ -335,7 +335,7 @@ async def test_night_light_restores_previous_mode(mocked_penrose):
 
 @pytest.mark.asyncio
 async def test_night_light_off_stays_off(mocked_penrose):
-    """Ensure disabling night light returns the light to off when it began off."""
+    """Ensure disabling night light returns a light that began off to off, white."""
     hass, _, bridge = mocked_penrose
     light_id = next(iter(bridge.lights)).id
     bridge.lights[light_id].on.on = False
@@ -357,6 +357,8 @@ async def test_night_light_off_stays_off(mocked_penrose):
     await bridge.async_block_until_done()
     await hass.async_block_till_done()
     assert not bridge.lights[light_id].is_on
+    # The stored mode is restored so a later power-on does not use night light.
+    assert bridge.lights[light_id].color_mode.mode == "white"
     assert hass.states.get(penrose_night_light_id).state == "off"
 
 
@@ -376,6 +378,7 @@ async def test_night_light_turn_off_defaults_to_off(mocked_penrose):
     await bridge.async_block_until_done()
     await hass.async_block_till_done()
     assert not bridge.lights[light_id].is_on
+    assert bridge.lights[light_id].color_mode.mode == "white"
     assert hass.states.get(penrose_night_light_id).state == "off"
 
 

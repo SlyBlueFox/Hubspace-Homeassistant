@@ -129,11 +129,17 @@ class HubspaceNightLightSwitch(HubspaceBaseEntity, SwitchEntity):
                 color_mode=self._previous_color_mode or "white",
             )
         else:
-            # The light was off beforehand, so return it to off.
+            # The light was off beforehand. Turn it off, then restore the prior
+            # color-mode while off so a later power-on does not use night light.
             await self.bridge.async_request_call(
                 self.controller.set_state,
                 device_id=self.resource.id,
                 on=False,
+            )
+            await self.bridge.async_request_call(
+                self.controller.set_state,
+                device_id=self.resource.id,
+                color_mode=self._previous_color_mode or "white",
             )
 
 
