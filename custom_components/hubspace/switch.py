@@ -80,13 +80,14 @@ class HubspaceNightLightSwitch(HubspaceBaseEntity, SwitchEntity):
         super().__init__(bridge, controller, resource, instance="night-light")
         self._attr_name = "Night Light"
         self._previous_color_mode: str | None = None
+        self._previous_on: bool | None = None
 
     @property
     def is_on(self) -> bool | None:
         """Determines if night light mode is active."""
         if self.resource.color_mode is None:
             return None
-        return self.resource.color_mode.mode == "night-light"
+        return self.resource.is_on and self.resource.color_mode.mode == "night-light"
 
     async def async_turn_on(
         self,
@@ -94,9 +95,18 @@ class HubspaceNightLightSwitch(HubspaceBaseEntity, SwitchEntity):
     ) -> None:
         """Turn on the entity."""
         self.logger.debug("Adjusting entity %s with %s", self.resource.id, kwargs)
-        # Remember the current mode so it can be restored when turned off.
+        # Remember the prior state so it can be restored when turned off.
+        self._previous_on = self.resource.is_on
         if self.resource.color_mode and self.resource.color_mode.mode != "night-light":
             self._previous_color_mode = self.resource.color_mode.mode
+        # Select the mode before powering on so the light does not briefly
+        # illuminate in its previous mode.
+        if not self.resource.is_on:
+            await self.bridge.async_request_call(
+                self.controller.set_state,
+                device_id=self.resource.id,
+                color_mode="night-light",
+            )
         await self.bridge.async_request_call(
             self.controller.set_state,
             device_id=self.resource.id,
@@ -110,12 +120,21 @@ class HubspaceNightLightSwitch(HubspaceBaseEntity, SwitchEntity):
     ) -> None:
         """Turn off the entity."""
         self.logger.debug("Adjusting entity %s with %s", self.resource.id, kwargs)
-        await self.bridge.async_request_call(
-            self.controller.set_state,
-            device_id=self.resource.id,
-            on=True,
-            color_mode=self._previous_color_mode or "white",
-        )
+        if self._previous_on:
+            # Restore the mode the light was in before night light was enabled.
+            await self.bridge.async_request_call(
+                self.controller.set_state,
+                device_id=self.resource.id,
+                on=True,
+                color_mode=self._previous_color_mode or "white",
+            )
+        else:
+            # The light was off beforehand, so return it to off.
+            await self.bridge.async_request_call(
+                self.controller.set_state,
+                device_id=self.resource.id,
+                on=False,
+            )
 
 
 def supports_night_light(resource: Light) -> bool:

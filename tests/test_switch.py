@@ -271,6 +271,7 @@ async def test_night_light_turn_on(mocked_penrose):
     """Ensure turning the switch on selects the night-light color-mode."""
     hass, _, bridge = mocked_penrose
     light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = True
     bridge.lights[light_id].color_mode.mode = "white"
     await hass.services.async_call(
         "switch",
@@ -285,10 +286,31 @@ async def test_night_light_turn_on(mocked_penrose):
 
 
 @pytest.mark.asyncio
+async def test_night_light_turn_on_from_off(mocked_penrose):
+    """Ensure enabling night light from off ends with the light on in the mode."""
+    hass, _, bridge = mocked_penrose
+    light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = False
+    bridge.lights[light_id].color_mode.mode = "white"
+    await hass.services.async_call(
+        "switch",
+        "turn_on",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    assert bridge.lights[light_id].is_on
+    assert bridge.lights[light_id].color_mode.mode == "night-light"
+    assert hass.states.get(penrose_night_light_id).state == "on"
+
+
+@pytest.mark.asyncio
 async def test_night_light_restores_previous_mode(mocked_penrose):
     """Ensure turning the switch off restores the mode active before it."""
     hass, _, bridge = mocked_penrose
     light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = True
     bridge.lights[light_id].color_mode.mode = "color"
     await hass.services.async_call(
         "switch",
@@ -306,15 +328,44 @@ async def test_night_light_restores_previous_mode(mocked_penrose):
     )
     await bridge.async_block_until_done()
     await hass.async_block_till_done()
+    assert bridge.lights[light_id].is_on
     assert bridge.lights[light_id].color_mode.mode == "color"
     assert hass.states.get(penrose_night_light_id).state == "off"
 
 
 @pytest.mark.asyncio
-async def test_night_light_turn_off_defaults_to_white(mocked_penrose):
-    """Ensure turning the switch off falls back to white when no prior mode is known."""
+async def test_night_light_off_stays_off(mocked_penrose):
+    """Ensure disabling night light returns the light to off when it began off."""
     hass, _, bridge = mocked_penrose
     light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = False
+    bridge.lights[light_id].color_mode.mode = "white"
+    await hass.services.async_call(
+        "switch",
+        "turn_on",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    await hass.services.async_call(
+        "switch",
+        "turn_off",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    assert not bridge.lights[light_id].is_on
+    assert hass.states.get(penrose_night_light_id).state == "off"
+
+
+@pytest.mark.asyncio
+async def test_night_light_turn_off_defaults_to_off(mocked_penrose):
+    """Ensure turning the switch off turns the light off when no prior state is known."""
+    hass, _, bridge = mocked_penrose
+    light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = True
     bridge.lights[light_id].color_mode.mode = "night-light"
     await hass.services.async_call(
         "switch",
@@ -324,7 +375,7 @@ async def test_night_light_turn_off_defaults_to_white(mocked_penrose):
     )
     await bridge.async_block_until_done()
     await hass.async_block_till_done()
-    assert bridge.lights[light_id].color_mode.mode == "white"
+    assert not bridge.lights[light_id].is_on
     assert hass.states.get(penrose_night_light_id).state == "off"
 
 
