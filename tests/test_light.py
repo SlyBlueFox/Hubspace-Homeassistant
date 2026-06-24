@@ -759,6 +759,66 @@ async def test_main_toggle_reset_defaults_to_white(mocked_penrose):
 
 
 @pytest.mark.asyncio
+async def test_night_light_off_sends_single_set_state(mocked_penrose, mocker):
+    """Disabling night light from off powers off and resets the mode in one call."""
+    hass, _, bridge = mocked_penrose
+    light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = False
+    bridge.lights[light_id].color_mode.mode = "white"
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    # Sending the mode without `on` makes the device echo `power: on`, so the
+    # power-off and the mode reset must travel in a single set_state call.
+    sent = mocker.spy(bridge.lights, "set_state")
+    await hass.services.async_call(
+        "light",
+        "turn_off",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    sent.assert_called_once()
+    assert sent.call_args.kwargs["on"] is False
+    assert sent.call_args.kwargs["color_mode"] == "white"
+
+
+@pytest.mark.asyncio
+async def test_main_toggle_reset_sends_single_set_state(mocked_penrose, mocker):
+    """The main toggle reset powers off and resets the mode in one call."""
+    hass, _, bridge = mocked_penrose
+    light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = True
+    bridge.lights[light_id].color_mode.mode = "color"
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    sent = mocker.spy(bridge.lights, "set_state")
+    await hass.services.async_call(
+        "light",
+        "turn_off",
+        {"entity_id": penrose_main_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    sent.assert_called_once()
+    assert sent.call_args.kwargs["on"] is False
+    assert sent.call_args.kwargs["color_mode"] == "color"
+
+
+@pytest.mark.asyncio
 async def test_night_light_not_created(mocked_entity):
     """Ensure a device without the night-light color-mode has no night light."""
     hass, _, _ = mocked_entity

@@ -179,22 +179,21 @@ class HubspaceLight(HubspaceBaseEntity, LightEntity):
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn device off."""
+        color_mode: str | None = None
+        if self.resource.color_mode and self.resource.color_mode.mode == "night-light":
+            # Reset to the pre-night-light mode (color/white/effect) in the same
+            # call so the next power-on does not resume night light. Sending the
+            # mode without `on` makes the device echo `power: on` until the next
+            # poll, so power-off and the reset go together.
+            color_mode = self.bridge.night_light_previous_modes.get(
+                self.resource.id, "white"
+            )
         await self.bridge.async_request_call(
             self.controller.set_state,
             device_id=self.resource.id,
             on=False,
+            color_mode=color_mode,
         )
-        if self.resource.color_mode and self.resource.color_mode.mode == "night-light":
-            # Reset to the pre-night-light mode (color/white/effect) while off so
-            # the next power-on does not resume night light.
-            previous = self.bridge.night_light_previous_modes.get(
-                self.resource.id, "white"
-            )
-            await self.bridge.async_request_call(
-                self.controller.set_state,
-                device_id=self.resource.id,
-                color_mode=previous,
-            )
 
 
 class HubspaceNightLight(HubspaceBaseEntity, LightEntity):
@@ -258,16 +257,14 @@ class HubspaceNightLight(HubspaceBaseEntity, LightEntity):
                 color_mode=previous,
             )
         else:
-            # The light was off beforehand. Turn it off, then restore the prior
-            # color-mode while off so a later power-on does not use night light.
+            # The light was off beforehand. Turn it off and restore the prior
+            # color-mode in one call so a later power-on does not use night light.
+            # Sending the mode without `on` makes the device echo `power: on`
+            # until the next poll, so both go together.
             await self.bridge.async_request_call(
                 self.controller.set_state,
                 device_id=self.resource.id,
                 on=False,
-            )
-            await self.bridge.async_request_call(
-                self.controller.set_state,
-                device_id=self.resource.id,
                 color_mode=previous,
             )
 
