@@ -634,6 +634,29 @@ async def test_night_light_turn_on_from_off(mocked_penrose):
 
 
 @pytest.mark.asyncio
+async def test_night_light_turn_on_sets_mode_before_power(mocked_penrose, mocker):
+    """Enabling night light from off must select the mode before powering on (no flash)."""
+    hass, _, bridge = mocked_penrose
+    light_id = next(iter(bridge.lights)).id
+    bridge.lights[light_id].on.on = False
+    bridge.lights[light_id].color_mode.mode = "white"
+    sent = mocker.spy(bridge.lights, "set_state")
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
+    )
+    await bridge.async_block_until_done()
+    await hass.async_block_till_done()
+    # First night-light is selected while off (no power), then power is turned on.
+    assert sent.call_args_list[0].kwargs.get("color_mode") == "night-light"
+    assert "on" not in sent.call_args_list[0].kwargs
+    assert sent.call_args_list[-1].kwargs["on"] is True
+    assert sent.call_args_list[-1].kwargs["color_mode"] == "night-light"
+
+
+@pytest.mark.asyncio
 async def test_night_light_restores_previous_mode(mocked_penrose):
     """Ensure turning the night light off restores the mode active before it."""
     hass, _, bridge = mocked_penrose
@@ -766,17 +789,26 @@ async def test_main_toggle_on_resets_prior_mode(mocked_penrose):
     bridge.lights[light_id].color_mode.mode = "color"
     # Enable night light, turn the main light off, then back on.
     await hass.services.async_call(
-        "light", "turn_on", {"entity_id": penrose_night_light_id}, blocking=True
+        "light",
+        "turn_on",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
     )
     await bridge.async_block_until_done()
     await hass.async_block_till_done()
     await hass.services.async_call(
-        "light", "turn_off", {"entity_id": penrose_main_light_id}, blocking=True
+        "light",
+        "turn_off",
+        {"entity_id": penrose_main_light_id},
+        blocking=True,
     )
     await bridge.async_block_until_done()
     await hass.async_block_till_done()
     await hass.services.async_call(
-        "light", "turn_on", {"entity_id": penrose_main_light_id}, blocking=True
+        "light",
+        "turn_on",
+        {"entity_id": penrose_main_light_id},
+        blocking=True,
     )
     await bridge.async_block_until_done()
     await hass.async_block_till_done()
@@ -792,7 +824,10 @@ async def test_main_toggle_on_reset_defaults_to_white(mocked_penrose):
     bridge.lights[light_id].on.on = False
     bridge.lights[light_id].color_mode.mode = "night-light"
     await hass.services.async_call(
-        "light", "turn_on", {"entity_id": penrose_main_light_id}, blocking=True
+        "light",
+        "turn_on",
+        {"entity_id": penrose_main_light_id},
+        blocking=True,
     )
     await bridge.async_block_until_done()
     await hass.async_block_till_done()
@@ -809,18 +844,27 @@ async def test_main_toggle_on_sets_mode_before_power(mocked_penrose, mocker):
     bridge.lights[light_id].color_mode.mode = "color"
     # Enable night light (records "color" as the prior mode), then power off.
     await hass.services.async_call(
-        "light", "turn_on", {"entity_id": penrose_night_light_id}, blocking=True
+        "light",
+        "turn_on",
+        {"entity_id": penrose_night_light_id},
+        blocking=True,
     )
     await bridge.async_block_until_done()
     await hass.async_block_till_done()
     await hass.services.async_call(
-        "light", "turn_off", {"entity_id": penrose_main_light_id}, blocking=True
+        "light",
+        "turn_off",
+        {"entity_id": penrose_main_light_id},
+        blocking=True,
     )
     await bridge.async_block_until_done()
     await hass.async_block_till_done()
     sent = mocker.spy(bridge.lights, "set_state")
     await hass.services.async_call(
-        "light", "turn_on", {"entity_id": penrose_main_light_id}, blocking=True
+        "light",
+        "turn_on",
+        {"entity_id": penrose_main_light_id},
+        blocking=True,
     )
     await bridge.async_block_until_done()
     await hass.async_block_till_done()
